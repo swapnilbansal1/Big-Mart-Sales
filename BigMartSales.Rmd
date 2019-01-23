@@ -1,0 +1,187 @@
+---
+title: "R Notebook"
+output: Big Mart Sales
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+train <- read.csv("Train.csv")
+test <- read.csv("Test.csv")
+dim(train)
+dim(test)
+```
+
+```{r}
+str(train)
+str(test)
+table(is.na(train))
+table(is.na(test))
+summary(train)
+summary(test)
+```
+
+
+```{r}
+test$Item_Outlet_Sales <-  1
+dim(test)
+```
+```{r}
+combi <- rbind(train, test)
+combi$Item_Weight[is.na(combi$Item_Weight)] <- median(combi$Item_Weight, na.rm = TRUE)
+table(is.na(combi$Item_Weight))
+```
+
+```{r}
+combi$Item_Visibility <- ifelse(combi$Item_Visibility == 0,median(combi$Item_Visibility), combi$Item_Visibility)
+levels(combi$Outlet_Size)[1] <- "Other"
+```
+
+```{r}
+summary(combi)
+```
+
+```{r}
+library(plyr)
+combi$Item_Fat_Content <- revalue(combi$Item_Fat_Content,c("LF" = "Low Fat", "reg" = "Regular"))
+combi$Item_Fat_Content <- revalue(combi$Item_Fat_Content, c("low fat" = "Low Fat"))
+table(combi$Item_Fat_Content)
+summary(combi)
+```
+
+```{r}
+library(dplyr)
+a <- combi%>%group_by(Outlet_Identifier)%>%tally()
+head(a)
+names(a)[2] <- "Outlet_Count"
+combi <- full_join(a, combi, by = "Outlet_Identifier")
+```
+
+```{r}
+b <- combi%>%group_by(Item_Identifier)%>% tally()
+names(b)[2] <- "Item_Count"
+head (b)
+combi <- full_join(b, combi, by = "Item_Identifier")
+```
+
+```{r}
+combi$Outlet_Year <-(2013 -combi$Outlet_Establishment_Year)
+```
+
+```{r}
+q <- substr(combi$Item_Identifier,1,2)
+q <- gsub("FD","Food",q)
+q <- gsub("DR","Drinks",q)
+q <- gsub("NC","Non-Consumable",q)
+table(q)
+combi$Item_Type_New <- q
+```
+
+```{r}
+combi$Item_Fat_Content <- ifelse(combi$Item_Fat_Content == "Regular",1,0)
+str(combi)
+```
+
+```{r}
+library(fastDummies)
+combi<-fastDummies::dummy_cols(combi,select_columns = c("Outlet_Size","Item_Type_New","Outlet_Location_Type", "Outlet_Type" ))
+```
+
+```{r}
+str(combi)
+```
+
+```{r}
+combi <- select(combi, -c(Item_Identifier, Outlet_Identifier, Item_Fat_Content, Outlet_Establishment_Year,Item_Type))
+str(combi)
+```
+
+```{r}
+new_train <- combi[1:nrow(train),]
+new_test <- combi[-(1:nrow(train)),]
+```
+
+```{r}
+linear_model <- lm(Item_Outlet_Sales ~ ., data = new_train)
+summary(linear_model)
+cor(new_train$Outlet_Count, new_train$`Outlet_Type_Grocery Store`)
+par(mfrow=c(2,2))
+plot(linear_model,col="Blue")
+```
+
+```{r}
+#removing heteroskedasticity
+linear_model <- lm(log(Item_Outlet_Sales) ~ ., data = new_train)
+summary(linear_model)
+par(mfrow=c(2,2))
+plot(linear_model,col="Blue")
+```
+
+```{r}
+#install.packages("Metrics")
+library(Metrics)
+rmse(new_train$Item_Outlet_Sales, exp(linear_model$fitted.values))
+
+```
+
+```{r}
+#loading required libraries
+#install.packages('rpart')
+library(rpart)
+#install.packages('e1071')
+library(e1071)
+#install.packages('rpart.plot')
+library(rpart.plot)
+#install.packages('caret')
+library(caret)
+
+#setting the tree control parameters
+fitControl <- trainControl(method = "cv", number = 5)
+cartGrid <- expand.grid(.cp=(1:10)*0.005)
+
+#decision tree
+tree_model <- train(Item_Outlet_Sales ~ ., data = new_train, method = "rpart", trControl = fitControl, tuneGrid = cartGrid)
+print(tree_model)
+
+```
+
+```{r}
+main_tree <- rpart(Item_Outlet_Sales ~ ., data = new_train, control = rpart.control(cp=0.01))
+prp(main_tree)
+```
+
+```{r}
+#load randomForest library
+library(randomForest)
+
+#set tuning parameters
+control <- trainControl(method = "cv", number = 5)
+
+#random forest model
+rf_model <- train(Item_Outlet_Sales ~ ., data = new_train, method = "parRF", trControl = control, prox = TRUE, allowParallel = TRUE)
+
+#check optimal parameters
+print(rf_model)
+```
+
+```{r}
+#random forest model
+forest_model <- randomForest(Item_Outlet_Sales ~ ., data = new_train, mtry = 15, ntree = 1000)
+print(forest_model)
+varImpPlot(forest_model)
+
+```
+
+```{r}
+main_predict <- predict(main_tree, newdata = new_test, type = "vector")
+sub_file <- data.frame(Item_Identifier = test$Item_Identifier, Outlet_Identifier = test$Outlet_Identifier,Item_Outlet_Sales = main_predict)
+write.csv(sub_file, 'Decision_tree_sales.csv')
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
